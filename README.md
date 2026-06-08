@@ -1,5 +1,6 @@
 # TryHackMe Streak Bot
 [![TryHackMe Streak Bot](https://github.com/Not-Mostafa/THM-Streak-Bot/actions/workflows/thmbot.yml/badge.svg)](https://github.com/Not-Mostafa/THM-Streak-Bot/actions/workflows/thmbot.yml)
+
 A small SeleniumBase automation that performs one reset-and-complete pass in a
 configured set of TryHackMe rooms. It can run locally or once per day through
 GitHub Actions, with optional live Discord notifications.
