@@ -46,6 +46,10 @@ jobs:
           python -m pip install -r requirements.txt
           seleniumbase install chromedriver
 
+      - name: Run tests
+        if: steps.schedule_guard.outputs.should_run == 'true'
+        run: python -m unittest discover -s tests -v
+
       - name: Run bot
         if: steps.schedule_guard.outputs.should_run == 'true'
         env:
@@ -62,5 +66,6 @@ jobs:
           path: |
             tryhackmebot.log
             *.png
+            *_page_state.json
           retention-days: 7
           if-no-files-found: warn

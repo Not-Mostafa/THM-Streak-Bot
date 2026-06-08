@@ -1,9 +1,7 @@
+import json
 import time
-import random
+
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, ElementClickInterceptedException
 
 
 ROOMS = [
@@ -11,6 +9,10 @@ ROOMS = [
     ("rppsempire", "https://tryhackme.com/room/rppsempire"),
     ("bashscripting", "https://tryhackme.com/room/bashscripting"),
 ]
+
+RESET_LABELS = ("reset room progress", "reset progress")
+CONFIRM_LABELS = ("yes", "confirm", "reset")
+COMPLETE_LABELS = ("complete", "complete task", "submit", "submit answer")
 
 
 def keep_streak(driver, status_callback=None):
@@ -20,7 +22,10 @@ def keep_streak(driver, status_callback=None):
         _notify(status_callback, f"Starting room {index}/{len(ROOMS)}: {room_name}.")
         result = _keep_streak_room(driver, room_name, room_url, status_callback)
         results.append(result)
-        _notify(status_callback, f"Finished room {index}/{len(ROOMS)}: {room_name} with status {result['status']}.")
+        _notify(
+            status_callback,
+            f"Finished room {index}/{len(ROOMS)}: {room_name} with status {result['status']}.",
+        )
     return results
 
 
@@ -31,218 +36,244 @@ def _notify(status_callback, message):
         print(f"[+] {message}")
 
 
+def _write_log(message):
+    print(message)
+    with open("tryhackmebot.log", "a", encoding="utf-8") as log_file:
+        log_file.write(f"{message}\n")
+
+
+def _wait_for_room(driver, room_name):
+    for _ in range(30):
+        if driver.execute_script("return document.readyState") == "complete":
+            # The room is a client-rendered app; allow its controls to mount.
+            time.sleep(3)
+            return
+        time.sleep(1)
+    raise TimeoutError(f"{room_name}: room page did not finish loading.")
+
+
+def _reset_via_api(driver, room_name):
+    """Use TryHackMe's authenticated same-origin reset action."""
+    csrf_token = ""
+    for cookie in driver.get_cookies():
+        if cookie.get("name", "").lower() in {"_csrf", "csrf", "csrf-token", "xsrf-token"}:
+            csrf_token = cookie.get("value", "")
+            break
+
+    script = """
+        const roomCode = arguments[0];
+        const suppliedCsrf = arguments[1];
+        const done = arguments[arguments.length - 1];
+        const csrfCookie = document.cookie
+            .split("; ")
+            .find((entry) => entry.startsWith("_csrf="));
+        const headers = {};
+        const csrf = suppliedCsrf || (
+            csrfCookie ? decodeURIComponent(csrfCookie.split("=").slice(1).join("=")) : ""
+        );
+        if (csrf) {
+            headers["CSRF-Token"] = csrf;
+        }
+        const body = new FormData();
+        body.append("code", roomCode);
+
+        fetch("/api/reset-progress", {
+            method: "POST",
+            credentials: "same-origin",
+            headers,
+            body
+        })
+        .then(async (response) => ({
+            ok: response.ok,
+            status: response.status,
+            body: (await response.text()).slice(0, 300)
+        }))
+        .then(done)
+        .catch((error) => done({ok: false, status: 0, body: String(error)}));
+    """
+    try:
+        driver.set_script_timeout(20)
+        result = driver.execute_async_script(script, room_name, csrf_token)
+    except Exception as error:
+        return False, f"browser API call failed: {error}"
+
+    if result and result.get("ok"):
+        try:
+            response_body = json.loads(result.get("body") or "{}")
+            if isinstance(response_body, dict) and response_body.get("success") is False:
+                return False, f"HTTP {result.get('status')}: {result.get('body', '')}"
+        except json.JSONDecodeError:
+            pass
+        return True, f"HTTP {result.get('status')}"
+    return False, f"HTTP {result.get('status')}: {result.get('body', '')}"
+
+
+def _visible_controls(driver):
+    return driver.find_elements(
+        By.CSS_SELECTOR,
+        "button, a, [role='button'], [role='menuitem']",
+    )
+
+
+def _control_text(element):
+    parts = [
+        element.text,
+        element.get_attribute("aria-label"),
+        element.get_attribute("title"),
+    ]
+    return " ".join(part.strip() for part in parts if part).strip().lower()
+
+
+def _control_search_text(element):
+    parts = [
+        _control_text(element),
+        element.get_attribute("data-testid"),
+        element.get_attribute("class"),
+    ]
+    return " ".join(part.strip() for part in parts if part).strip().lower()
+
+
+def _click_named_control(driver, labels, contains=False):
+    """Click one visible control whose text or accessible label matches."""
+    normalized_labels = tuple(label.lower() for label in labels)
+    for element in _visible_controls(driver):
+        try:
+            if not element.is_displayed() or not element.is_enabled():
+                continue
+            text = _control_text(element)
+            search_text = _control_search_text(element)
+            matches = (
+                any(label in search_text for label in normalized_labels)
+                if contains
+                else text in normalized_labels
+            )
+            if not matches:
+                continue
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+            try:
+                element.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", element)
+            return True, text or search_text
+        except Exception:
+            continue
+    return False, ""
+
+
+def _reset_via_ui(driver):
+    clicked, _ = _click_named_control(driver, RESET_LABELS, contains=True)
+    if not clicked:
+        _click_named_control(driver, ("settings", "room settings", "more options"), contains=True)
+        time.sleep(1)
+        clicked, _ = _click_named_control(driver, RESET_LABELS, contains=True)
+    if not clicked:
+        return False
+
+    time.sleep(1)
+    confirmed, _ = _click_named_control(driver, CONFIRM_LABELS)
+    return confirmed
+
+
+def _submit_completion(driver):
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
+    time.sleep(1)
+    submitted, label = _click_named_control(driver, COMPLETE_LABELS)
+    if not submitted:
+        submitted, label = _click_named_control(driver, COMPLETE_LABELS, contains=True)
+    return submitted, label
+
+
+def _read_streak(driver):
+    selectors = [
+        (By.ID, "user-streak"),
+        (By.CSS_SELECTOR, "[data-streak]"),
+        (By.CSS_SELECTOR, "[class*='streak' i]"),
+    ]
+    for by, selector in selectors:
+        for element in driver.find_elements(by, selector):
+            try:
+                value = element.get_attribute("data-streak") or element.text
+                if value and value.strip():
+                    return value.strip()
+            except Exception:
+                continue
+    return "not found"
+
+
+def _save_failure_diagnostics(driver, room_name):
+    screenshot = f"{room_name}_failure.png"
+    state_file = f"{room_name}_page_state.json"
+    try:
+        driver.save_screenshot(screenshot)
+        controls = [_control_text(element) for element in _visible_controls(driver)]
+        state = {
+            "url": driver.current_url,
+            "title": driver.title,
+            "visible_controls": [text for text in controls if text][:100],
+        }
+        with open(state_file, "w", encoding="utf-8") as output:
+            json.dump(state, output, indent=2)
+    except Exception as error:
+        _write_log(f"[!] {room_name}: could not save failure diagnostics: {error}")
+
+
 def _keep_streak_room(driver, room_name, room_url, status_callback):
     """Run one reset and completion pass in a room."""
-    streak_value = "not found"
     reset_done = False
     submit_done = False
+    streak_value = "not found"
+
     try:
-        # Navigate to the target room
-        time.sleep(random.uniform(3, 6))
         driver.get(room_url)
-        
-        with open("tryhackmebot.log", 'a') as f:
-            print(f"[+] Navigated to {room_name} room")
-            f.write(f"[+] Navigated to {room_name} room\n")
-        
-        # Try to find and click the profile dropdown
-        try:
-            dropdown = WebDriverWait(driver, 15).until(
-                EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'dropdown')]"))
-            )
-            dropdown.click()
-            
-            time.sleep(random.uniform(1, 2))
-            
-            # Find and click the reset progress option
-            reset_option = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Reset Room Progress')]"))
-            )
-            reset_option.click()
-            
-            time.sleep(random.uniform(1, 3))
-            
-            # Confirm reset
-            confirm_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Yes')]"))
-            )
-            confirm_button.click()
-            reset_done = True
-            
-            with open("tryhackmebot.log", 'a') as f:
-                print("[+] Room's Progress Reset")
-                f.write("[+] Room's Progress Reset\n")
-            _notify(status_callback, f"{room_name}: room progress reset.")
-                
-        except (NoSuchElementException, TimeoutException, ElementClickInterceptedException) as e:
-            with open("tryhackmebot.log", 'a') as f:
-                print(f"[!] Error resetting progress: {e}")
-                f.write(f"[!] Error resetting progress: {e}\n")
-                print("[!] Trying alternative XPaths...")
-                f.write("[!] Trying alternative XPaths...\n")
-            
-            # Try alternative XPaths
-            try:
-                # Try to find any dropdown or menu button
-                dropdown_alternatives = [
-                    "//div[contains(@class, 'dropdown')]",
-                    "//button[contains(@class, 'dropdown')]",
-                    "//div[contains(@class, 'menu')]",
-                    "//button[contains(@class, 'menu')]",
-                    "//div[@id='user-menu']",
-                    "//button[contains(@class, 'navbar-toggler')]"
-                ]
-                
-                for xpath in dropdown_alternatives:
-                    try:
-                        menu = driver.find_element(By.XPATH, xpath)
-                        menu.click()
-                        time.sleep(1)
-                        break
-                    except:
-                        continue
-                
-                # Look for reset option with various XPaths
-                reset_alternatives = [
-                    "//a[contains(text(), 'Reset')]",
-                    "//a[contains(text(), 'reset')]",
-                    "//button[contains(text(), 'Reset')]",
-                    "//div[contains(text(), 'Reset')]",
-                    "//span[contains(text(), 'Reset')]"
-                ]
-                
-                for xpath in reset_alternatives:
-                    try:
-                        reset = driver.find_element(By.XPATH, xpath)
-                        reset.click()
-                        time.sleep(1)
-                        break
-                    except:
-                        continue
-                
-                # Try to find confirm button with various XPaths
-                confirm_alternatives = [
-                    "//button[contains(text(), 'Yes')]",
-                    "//button[contains(text(), 'Confirm')]",
-                    "//button[contains(text(), 'OK')]",
-                    "//button[contains(@class, 'confirm')]",
-                    "//button[contains(@class, 'success')]"
-                ]
-                
-                for xpath in confirm_alternatives:
-                    try:
-                        confirm = driver.find_element(By.XPATH, xpath)
-                        confirm.click()
-                        reset_done = True
-                        _notify(status_callback, f"{room_name}: room progress reset using fallback controls.")
-                        break
-                    except:
-                        continue
-                        
-            except Exception as e2:
-                with open("tryhackmebot.log", 'a') as f:
-                    print(f"[!] Alternative methods also failed: {e2}")
-                    f.write(f"[!] Alternative methods also failed: {e2}\n")
-        if not reset_done:
-            _notify(status_callback, f"{room_name}: failed to confirm room progress reset.")
+        _wait_for_room(driver, room_name)
+        _write_log(f"[+] Navigated to {room_name} room")
 
-        # Scroll to the bottom and complete an action
-        time.sleep(random.uniform(3, 6))
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(random.uniform(2, 3))
-        
-        # Try to find and click a complete button
-        try:
-            complete_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Complete')]"))
-            )
-            complete_button.click()
-            submit_done = True
-            _notify(status_callback, f"{room_name}: completion submitted.")
-        except (NoSuchElementException, TimeoutException) as e:
-            with open("tryhackmebot.log", 'a') as f:
-                print(f"[!] Could not find complete button: {e}")
-                f.write(f"[!] Could not find complete button: {e}\n")
-                print("[!] Trying alternative buttons...")
-                f.write("[!] Trying alternative buttons...\n")
-            
-            # Try alternative buttons
-            button_alternatives = [
-                "//button[contains(@class, 'completed')]",
-                "//button[contains(@class, 'complete')]",
-                "//button[contains(@class, 'submit')]",
-                "//button[contains(@class, 'answer')]",
-                "//button[contains(text(), 'Submit')]",
-                "//button[contains(text(), 'Answer')]",
-                "//button[contains(text(), 'Next')]"
-            ]
-            
-            for xpath in button_alternatives:
-                try:
-                    button = driver.find_element(By.XPATH, xpath)
-                    button.click()
-                    submit_done = True
-                    _notify(status_callback, f"{room_name}: completion submitted using fallback controls.")
-                    break
-                except:
-                    continue
-        if not submit_done:
-            _notify(status_callback, f"{room_name}: failed to submit a completion.")
+        reset_done, reset_detail = _reset_via_api(driver, room_name)
+        if reset_done:
+            _notify(status_callback, f"{room_name}: room progress reset via API.")
+        else:
+            _write_log(f"[!] {room_name}: API reset failed ({reset_detail}); trying room controls.")
+            reset_done = _reset_via_ui(driver)
+            if reset_done:
+                _notify(status_callback, f"{room_name}: room progress reset using room controls.")
+            else:
+                _notify(status_callback, f"{room_name}: failed to reset room progress.")
 
-        # Check the streak counter
-        time.sleep(random.uniform(1, 3))
-        driver.get(room_url)  # Refresh to see updated streak
-        
-        try:
-            streak = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "user-streak"))
-            ).get_attribute("data-streak")
-            streak_value = streak
-            
-            with open("tryhackmebot.log", 'a') as f:
-                print(f"[+] Success! Your Streak is {streak}")
-                f.write(f"[+] Success! Your Streak is {streak}\n")
-                
-        except (NoSuchElementException, TimeoutException) as e:
-            with open("tryhackmebot.log", 'a') as f:
-                print(f"[!] Could not find streak counter: {e}")
-                f.write(f"[!] Could not find streak counter: {e}\n")
-                
-            # Try to find streak counter with alternative XPaths
-            streak_alternatives = [
-                "//div[contains(@class, 'streak')]",
-                "//span[contains(@class, 'streak')]",
-                "//div[contains(text(), 'streak')]",
-                "//span[contains(text(), 'streak')]"
-            ]
-            
-            for xpath in streak_alternatives:
-                try:
-                    streak_element = driver.find_element(By.XPATH, xpath)
-                    with open("tryhackmebot.log", 'a') as f:
-                        print(f"[+] Found streak element: {streak_element.text}")
-                        f.write(f"[+] Found streak element: {streak_element.text}\n")
-                    streak_value = streak_element.text
-                    break
-                except:
-                    continue
+        driver.refresh()
+        _wait_for_room(driver, room_name)
+        submit_done, submit_label = _submit_completion(driver)
+        if submit_done:
+            _notify(status_callback, f"{room_name}: completion submitted using '{submit_label}'.")
+        else:
+            _notify(status_callback, f"{room_name}: failed to find a completion control.")
+
+        driver.refresh()
+        _wait_for_room(driver, room_name)
+        streak_value = _read_streak(driver)
+        _write_log(f"[+] {room_name}: streak value is {streak_value}")
+
+        status = "success" if reset_done and submit_done else "failed"
+        if status == "failed":
+            _save_failure_diagnostics(driver, room_name)
+
         return {
             "room": room_name,
             "url": room_url,
             "reset": reset_done,
             "submitted": submit_done,
             "streak": streak_value,
-            "status": "success" if reset_done and submit_done else "failed",
+            "status": status,
         }
-            
     except KeyboardInterrupt:
-        with open("tryhackmebot.log", 'a') as f:
-            print("[!] Process interrupted by user")
-            f.write("[!] Process interrupted by user\n")
         raise
-            
-    except Exception as e:
-        with open("tryhackmebot.log", 'a') as f:
-            print(f"[!] Something Went Wrong: {e}")
-            f.write(f"[!] Something Went Wrong: {e}\n")
-        raise
+    except Exception as error:
+        _write_log(f"[!] {room_name}: unexpected error: {error}")
+        _save_failure_diagnostics(driver, room_name)
+        return {
+            "room": room_name,
+            "url": room_url,
+            "reset": reset_done,
+            "submitted": submit_done,
+            "streak": streak_value,
+            "status": "failed",
+        }

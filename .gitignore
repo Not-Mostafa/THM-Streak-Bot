@@ -15,6 +15,7 @@ cookies.json
 *.log
 *.png
 recapchasound/
+*_page_state.json
 
 # Editors and operating systems
 .idea/

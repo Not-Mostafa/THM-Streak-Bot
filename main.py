@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import datetime
+import re
 import requests
 from seleniumbase import Driver
 from keepstreak import keep_streak
@@ -33,6 +34,9 @@ def send_discord_payload(success, context_summary, image_path=None):
         color = 15158332
 
     discord_user_id = os.getenv("DISCORD_USER_ID", "").strip()
+    if discord_user_id and not re.fullmatch(r"\d{17,20}", discord_user_id):
+        print("[!] DISCORD_USER_ID is not a valid numeric Discord snowflake; sending without a mention.")
+        discord_user_id = ""
     repository = os.getenv("GITHUB_REPOSITORY", "local run")
     run_id = os.getenv("GITHUB_RUN_ID")
     run_url = f"https://github.com/{repository}/actions/runs/{run_id}" if run_id else "local run"
@@ -72,18 +76,21 @@ def send_discord_payload(success, context_summary, image_path=None):
     try:
         if image_path and os.path.exists(image_path):
             with open(image_path, "rb") as img:
+                payload["embeds"][0]["image"] = {"url": f"attachment://{os.path.basename(image_path)}"}
                 files = {
                     "payload_json": (None, json.dumps(payload), "application/json"),
                     "file": (os.path.basename(image_path), img, "image/png")
                 }
-                payload["embeds"][0]["image"] = {"url": f"attachment://{os.path.basename(image_path)}"}
                 response = requests.post(webhook_url, files=files, timeout=15)
         else:
             response = requests.post(webhook_url, json=payload, headers={"Content-Type": "application/json"}, timeout=15)
         response.raise_for_status()
         print("[+] Discord monitoring transmission complete.")
+    except requests.HTTPError as discord_err:
+        response_text = discord_err.response.text[:500] if discord_err.response is not None else ""
+        print(f"[!] Discord webhook rejected the payload: {discord_err}; response: {response_text}")
     except Exception as discord_err:
-        print(f"[!] Critical structural failure pushing metrics to Discord webhook: {discord_err}")
+        print(f"[!] Failed pushing metrics to Discord webhook: {discord_err}")
 
 
 def send_live_update(message):

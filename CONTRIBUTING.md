@@ -14,6 +14,7 @@ repository `.gitignore` excludes the common local files.
 
 ## Before opening a pull request
 
-- Run `python -m compileall main.py keepstreak.py`.
+- Run `python -m unittest discover -s tests` and
+  `python -m compileall main.py keepstreak.py`.
 - Keep changes focused and document any user-facing behavior changes.
 - Never include real TryHackMe cookies or Discord webhook URLs.
