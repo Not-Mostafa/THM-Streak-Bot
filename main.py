@@ -157,14 +157,18 @@ def main():
             write_log("[+] Streak verification processing finalized safely.")
             
             status_success = all(result["status"] == "success" for result in room_results)
-            result_lines = [
-                (
+            result_lines = []
+            for result in room_results:
+                progress = (
+                    f"{result['progress']}%"
+                    if result["progress"] is not None
+                    else "not exposed"
+                )
+                result_lines.append(
                     f"- **{result['room']}**: `{result['status']}` | "
-                    f"reset `{result['reset']}` | progress `{result['progress']}%` | "
+                    f"reset `{result['reset']}` | progress `{progress}` | "
                     f"streak `{result['streak']}`"
                 )
-                for result in room_results
-            ]
             status_details = "Room execution results:\n" + "\n".join(result_lines)
         else:
             write_log("[!] Failed routing navigation parameters past security framework gates.")

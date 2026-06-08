@@ -122,6 +122,11 @@ class KeepStreakTests(unittest.TestCase):
     def test_read_room_progress_can_be_unavailable(self):
         self.assertIsNone(keepstreak._read_room_progress(FakeDriver()))
 
+    def test_read_streak_uses_accessible_label(self):
+        driver = FakeDriver([FakeElement(attributes={"aria-label": "82 day streak"})])
+
+        self.assertEqual(keepstreak._read_streak(driver), "82")
+
     def test_room_is_successful_when_reset_and_progress_are_verified(self):
         driver = FakeDriver(
             api_result={"ok": True, "status": 200, "body": '{"success":true}'},
@@ -138,6 +143,23 @@ class KeepStreakTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertTrue(result["reset"])
         self.assertEqual(result["progress"], 16)
+
+    def test_room_is_successful_when_reset_succeeds_and_progress_is_hidden(self):
+        driver = FakeDriver(
+            api_result={"ok": True, "status": 200, "body": '{"success":true}'},
+            script_result=None,
+        )
+
+        result = keepstreak._keep_streak_room(
+            driver,
+            "polkit",
+            "https://tryhackme.com/room/polkit",
+            None,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(result["reset"])
+        self.assertIsNone(result["progress"])
 
 
 if __name__ == "__main__":

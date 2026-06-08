@@ -1,4 +1,5 @@
 import json
+import re
 import time
 
 from selenium.webdriver.common.by import By
@@ -187,15 +188,36 @@ def _read_streak(driver):
                     return value.strip()
             except Exception:
                 continue
+    for element in _visible_controls(driver):
+        match = re.search(r"\b(\d+)\s+day streak\b", _control_text(element), re.IGNORECASE)
+        if match:
+            return match.group(1)
     return "not found"
 
 
 def _read_room_progress(driver):
-    """Read the percentage displayed by TryHackMe's room progress bar."""
+    """Best-effort read of TryHackMe's visually rendered room progress."""
     script = """
-        const text = document.body ? document.body.innerText : "";
-        const match = text.match(/Room progress\\s*\\((\\d+)%\\)/i);
-        return match ? Number(match[1]) : null;
+        const values = [document.body ? document.body.innerText : ""];
+        const candidates = document.querySelectorAll(
+            '[class*="progress" i], [role="progressbar"], [aria-label], [aria-valuetext], [title]'
+        );
+        for (const element of candidates) {
+            values.push(
+                element.innerText || "",
+                element.textContent || "",
+                element.getAttribute("aria-label") || "",
+                element.getAttribute("aria-valuetext") || "",
+                element.getAttribute("title") || "",
+                getComputedStyle(element, "::before").content || "",
+                getComputedStyle(element, "::after").content || ""
+            );
+        }
+        for (const value of values) {
+            const match = value.match(/Room progress\\s*\\((\\d+)%\\)/i);
+            if (match) return Number(match[1]);
+        }
+        return null;
     """
     try:
         return driver.execute_script(script)
@@ -245,15 +267,20 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
         driver.refresh()
         _wait_for_room(driver, room_name)
         progress = _read_room_progress(driver)
-        if progress is not None and progress > 0:
+        if progress is not None:
             _notify(status_callback, f"{room_name}: verified room progress at {progress}%.")
         else:
-            _notify(status_callback, f"{room_name}: could not verify room progress after reset.")
+            _notify(
+                status_callback,
+                f"{room_name}: reset accepted; visual progress value is unavailable to browser scripts.",
+            )
 
         streak_value = _read_streak(driver)
         _write_log(f"[+] {room_name}: streak value is {streak_value}")
 
-        status = "success" if reset_done and progress is not None and progress > 0 else "failed"
+        # A successful reset API response is the authoritative action result.
+        # Progress is best-effort reporting because TryHackMe may render it via CSS.
+        status = "success" if reset_done else "failed"
         if status == "failed":
             _save_failure_diagnostics(driver, room_name)
 
