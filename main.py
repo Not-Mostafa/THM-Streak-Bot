@@ -43,15 +43,16 @@ def send_discord_payload(success, context_summary, image_path=None):
     elapsed = datetime.datetime.now(datetime.timezone.utc) - run_started_at
     elapsed_seconds = int(elapsed.total_seconds())
 
-    # Keep layout footprint compact inside discord code snippet windows
-    log_chunk = "\n".join(execution_logs[-20:])[-900:]
+    # Stay below Discord's per-field and total-embed character limits.
+    log_text = "\n".join(execution_logs)[-2400:]
+    log_chunks = [log_text[index:index + 800] for index in range(0, len(log_text), 800)]
     
     payload = {
         "content": f"<@{discord_user_id}>" if discord_user_id else "",
         "allowed_mentions": {"users": [discord_user_id]} if discord_user_id else {"parse": []},
         "embeds": [{
             "title": "TryHackMe Streak Bot",
-            "description": f"**Status:** {status_text}\n\n**Summary:**\n{context_summary}",
+            "description": f"**Status:** {status_text}\n\n{context_summary[:1400]}",
             "color": color,
             "fields": [
                 {
@@ -62,11 +63,13 @@ def send_discord_payload(success, context_summary, image_path=None):
                         f"**Elapsed:** `{elapsed_seconds}s`\n"
                         f"**Rooms:** `polkit`, `rppsempire`, `bashscripting`"
                     )
-                },
-                {
-                    "name": "Recent logs",
-                    "value": f"```text\n{log_chunk}\n```"
                 }
+            ] + [
+                {
+                    "name": f"Logs {index + 1}/{len(log_chunks)}",
+                    "value": f"```text\n{chunk}\n```",
+                }
+                for index, chunk in enumerate(log_chunks)
             ],
             "footer": {"text": "Executed via GitHub Actions Sync Runner"},
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -93,9 +96,8 @@ def send_discord_payload(success, context_summary, image_path=None):
         print(f"[!] Failed pushing metrics to Discord webhook: {discord_err}")
 
 
-def send_live_update(message):
+def record_update(message):
     write_log(f"[+] {message}")
-    send_discord_payload(None, message)
 
 def main():
     start_time = datetime.datetime.now().strftime("%d-%m-%Y, %H:%M:%S")
@@ -150,15 +152,15 @@ def main():
             
             # Executing streak maintenance module logic
             write_log("[+] Initializing user streak tracking tasks...")
-            send_live_update("Authentication confirmed. Starting one reset and submit pass in each configured room.")
-            room_results = keep_streak(driver, status_callback=send_live_update)
+            record_update("Authentication confirmed. Starting one reset and progress verification pass in each configured room.")
+            room_results = keep_streak(driver, status_callback=record_update)
             write_log("[+] Streak verification processing finalized safely.")
             
             status_success = all(result["status"] == "success" for result in room_results)
             result_lines = [
                 (
                     f"- **{result['room']}**: `{result['status']}` | "
-                    f"reset `{result['reset']}` | submitted `{result['submitted']}` | "
+                    f"reset `{result['reset']}` | progress `{result['progress']}%` | "
                     f"streak `{result['streak']}`"
                 )
                 for result in room_results
@@ -182,7 +184,7 @@ def main():
                 write_log(f"[!] Failed exporting environment screen snapshot frame: {ss_err}")
             driver.quit()
 
-        # Fire telemetry payloads to Discord
+        # Send exactly one final Discord report.
         send_discord_payload(status_success, status_details, screenshot_name)
         
         with open("tryhackmebot.log", "a") as disk_log:

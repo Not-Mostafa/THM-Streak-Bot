@@ -43,15 +43,21 @@ class FakeElement:
 
 
 class FakeDriver:
-    def __init__(self, elements=None, api_result=None):
+    def __init__(self, elements=None, api_result=None, script_result=None):
         self.elements = elements or []
         self.api_result = api_result
+        self.script_result = script_result
+        self.current_url = "https://tryhackme.com/room/polkit"
+        self.title = "TryHackMe | Test Room"
+        self.refreshed = False
 
     def find_elements(self, _by, _selector):
         return self.elements
 
     def execute_script(self, _script, *_args):
-        return None
+        if "document.readyState" in _script:
+            return "complete"
+        return self.script_result
 
     def set_script_timeout(self, _timeout):
         return None
@@ -61,6 +67,15 @@ class FakeDriver:
 
     def execute_async_script(self, _script, _room_name, _csrf_token):
         return self.api_result
+
+    def get(self, url):
+        self.current_url = url
+
+    def refresh(self):
+        self.refreshed = True
+
+    def save_screenshot(self, _path):
+        return True
 
 
 class KeepStreakTests(unittest.TestCase):
@@ -75,17 +90,6 @@ class KeepStreakTests(unittest.TestCase):
         self.assertTrue(clicked)
         self.assertTrue(element.clicked)
         self.assertIn("reset room progress", label)
-
-    def test_click_named_control_does_not_click_next(self):
-        element = FakeElement(text="Next")
-        clicked, _ = keepstreak._click_named_control(
-            FakeDriver([element]),
-            keepstreak.COMPLETE_LABELS,
-            contains=True,
-        )
-
-        self.assertFalse(clicked)
-        self.assertFalse(element.clicked)
 
     def test_click_named_control_matches_exact_text_despite_css_classes(self):
         element = FakeElement(text="Confirm", attributes={"class": "btn btn-danger"})
@@ -111,6 +115,29 @@ class KeepStreakTests(unittest.TestCase):
         success, _ = keepstreak._reset_via_api(driver, "polkit")
 
         self.assertFalse(success)
+
+    def test_read_room_progress_returns_percentage(self):
+        self.assertEqual(keepstreak._read_room_progress(FakeDriver(script_result=16)), 16)
+
+    def test_read_room_progress_can_be_unavailable(self):
+        self.assertIsNone(keepstreak._read_room_progress(FakeDriver()))
+
+    def test_room_is_successful_when_reset_and_progress_are_verified(self):
+        driver = FakeDriver(
+            api_result={"ok": True, "status": 200, "body": '{"success":true}'},
+            script_result=16,
+        )
+
+        result = keepstreak._keep_streak_room(
+            driver,
+            "polkit",
+            "https://tryhackme.com/room/polkit",
+            None,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(result["reset"])
+        self.assertEqual(result["progress"], 16)
 
 
 if __name__ == "__main__":

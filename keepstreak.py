@@ -12,7 +12,6 @@ ROOMS = [
 
 RESET_LABELS = ("reset room progress", "reset progress")
 CONFIRM_LABELS = ("yes", "confirm", "reset")
-COMPLETE_LABELS = ("complete", "complete task", "submit", "submit answer")
 
 
 def keep_streak(driver, status_callback=None):
@@ -174,15 +173,6 @@ def _reset_via_ui(driver):
     return confirmed
 
 
-def _submit_completion(driver):
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-    time.sleep(1)
-    submitted, label = _click_named_control(driver, COMPLETE_LABELS)
-    if not submitted:
-        submitted, label = _click_named_control(driver, COMPLETE_LABELS, contains=True)
-    return submitted, label
-
-
 def _read_streak(driver):
     selectors = [
         (By.ID, "user-streak"),
@@ -198,6 +188,19 @@ def _read_streak(driver):
             except Exception:
                 continue
     return "not found"
+
+
+def _read_room_progress(driver):
+    """Read the percentage displayed by TryHackMe's room progress bar."""
+    script = """
+        const text = document.body ? document.body.innerText : "";
+        const match = text.match(/Room progress\\s*\\((\\d+)%\\)/i);
+        return match ? Number(match[1]) : null;
+    """
+    try:
+        return driver.execute_script(script)
+    except Exception:
+        return None
 
 
 def _save_failure_diagnostics(driver, room_name):
@@ -218,9 +221,9 @@ def _save_failure_diagnostics(driver, room_name):
 
 
 def _keep_streak_room(driver, room_name, room_url, status_callback):
-    """Run one reset and completion pass in a room."""
+    """Reset a room and verify TryHackMe reports progress afterward."""
     reset_done = False
-    submit_done = False
+    progress = None
     streak_value = "not found"
 
     try:
@@ -241,18 +244,16 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
 
         driver.refresh()
         _wait_for_room(driver, room_name)
-        submit_done, submit_label = _submit_completion(driver)
-        if submit_done:
-            _notify(status_callback, f"{room_name}: completion submitted using '{submit_label}'.")
+        progress = _read_room_progress(driver)
+        if progress is not None and progress > 0:
+            _notify(status_callback, f"{room_name}: verified room progress at {progress}%.")
         else:
-            _notify(status_callback, f"{room_name}: failed to find a completion control.")
+            _notify(status_callback, f"{room_name}: could not verify room progress after reset.")
 
-        driver.refresh()
-        _wait_for_room(driver, room_name)
         streak_value = _read_streak(driver)
         _write_log(f"[+] {room_name}: streak value is {streak_value}")
 
-        status = "success" if reset_done and submit_done else "failed"
+        status = "success" if reset_done and progress is not None and progress > 0 else "failed"
         if status == "failed":
             _save_failure_diagnostics(driver, room_name)
 
@@ -260,7 +261,7 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
             "room": room_name,
             "url": room_url,
             "reset": reset_done,
-            "submitted": submit_done,
+            "progress": progress,
             "streak": streak_value,
             "status": status,
         }
@@ -273,7 +274,7 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
             "room": room_name,
             "url": room_url,
             "reset": reset_done,
-            "submitted": submit_done,
+            "progress": progress,
             "streak": streak_value,
             "status": "failed",
         }

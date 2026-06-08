@@ -1,9 +1,9 @@
 # TryHackMe Streak Bot
 [![TryHackMe Streak Bot](https://github.com/Not-Mostafa/THM-Streak-Bot/actions/workflows/thmbot.yml/badge.svg)](https://github.com/Not-Mostafa/THM-Streak-Bot/actions/workflows/thmbot.yml)
 
-A small SeleniumBase automation that performs one reset-and-complete pass in a
+A small SeleniumBase automation that resets and verifies progress in a
 configured set of TryHackMe rooms. It can run locally or once per day through
-GitHub Actions, with optional live Discord notifications.
+GitHub Actions, with an optional final Discord report.
 
 > [!WARNING]
 > This project automates activity on a third-party service. Use it only on your
@@ -17,9 +17,9 @@ On each run, the bot:
 1. Starts a headless Chrome session with SeleniumBase.
 2. Loads the cookies supplied in `AUTH_COOKIES` and verifies dashboard access.
 3. Visits each room configured in `keepstreak.py`.
-4. Resets the room, submits one completion action, and reads the streak value.
+4. Resets the room and verifies TryHackMe still reports room progress afterward.
 5. Writes `tryhackmebot.log`, captures `thm_dashboard_state.png`, and optionally
-   sends progress and the final result to Discord.
+   sends one final detailed result to Discord.
 
 The default rooms are:
 
@@ -48,7 +48,7 @@ Discord notifications are optional.
 | Secret | Required | Description |
 | --- | --- | --- |
 | `AUTH_COOKIES` | Yes | A JSON array of cookies from an authenticated TryHackMe browser session. |
-| `DISCORD_WEBHOOK_URL` | No | Discord webhook used for progress and final-result messages. |
+| `DISCORD_WEBHOOK_URL` | No | Discord webhook used for one final detailed result message. |
 | `DISCORD_USER_ID` | No | Numeric Discord user ID to mention in webhook messages. |
 
 The workflow is scheduled for **04:00 Africa/Cairo** each day. GitHub cron uses
@@ -120,7 +120,7 @@ Each entry contains the display name used in logs and its full room URL.
 | Path | Purpose |
 | --- | --- |
 | `main.py` | Starts the browser, restores authentication, coordinates the run, and reports results. |
-| `keepstreak.py` | Contains the configured rooms and room reset/completion logic. |
+| `keepstreak.py` | Contains the configured rooms, reset logic, and progress verification. |
 | `.github/workflows/thmbot.yml` | Runs the bot daily and uploads diagnostics. |
 | `requirements.txt` | Python runtime dependencies. |
 
