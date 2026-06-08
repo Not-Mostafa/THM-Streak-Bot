@@ -4,9 +4,9 @@ import json
 import datetime
 import requests
 from seleniumbase import Driver
-from keepstreak import *
+from keepstreak import keep_streak
 
-print("[+] UPDATED RUNNER - CHROMIUM UNDETECTED WITH DISCORD METRICS")
+print("[+] TryHackMe Streak Bot starting")
 
 # Global tracking arrays for execution sync
 execution_logs = []
@@ -46,7 +46,7 @@ def send_discord_payload(success, context_summary, image_path=None):
         "content": f"<@{discord_user_id}>" if discord_user_id else "",
         "allowed_mentions": {"users": [discord_user_id]} if discord_user_id else {"parse": []},
         "embeds": [{
-            "title": "🛡️ TryHackMe Automation Sync Execution",
+            "title": "TryHackMe Streak Bot",
             "description": f"**Status:** {status_text}\n\n**Summary:**\n{context_summary}",
             "color": color,
             "fields": [
@@ -60,7 +60,7 @@ def send_discord_payload(success, context_summary, image_path=None):
                     )
                 },
                 {
-                    "name": "📋 Active Application Logs",
+                    "name": "Recent logs",
                     "value": f"```text\n{log_chunk}\n```"
                 }
             ],
@@ -133,9 +133,7 @@ def main():
             driver.get("https://tryhackme.com/dashboard")
             driver.sleep(4)
         else:
-            write_log("[!] AUTH_COOKIES secret missing or parsing as blank value. Routing to login fallback.")
-            if 'login_form' in globals():
-                login_form(driver)
+            raise ValueError("AUTH_COOKIES is missing or empty. Add a valid cookie JSON array.")
 
         current_url = driver.current_url
         write_log(f"[+] Verification Landing Target: {current_url}")

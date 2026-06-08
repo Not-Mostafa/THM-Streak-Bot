@@ -5,11 +5,19 @@ on:
     # Egypt switches between UTC+2 and UTC+3. The guard below runs only at 04:00 Africa/Cairo.
     - cron: '0 1 * * *'
     - cron: '0 2 * * *'
-  workflow_dispatch: # Allows manual verification testing execution track
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tryhackme-streak-bot
+  cancel-in-progress: false
 
 jobs:
   maintain-streak:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,41 +32,30 @@ jobs:
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set up Python Environment
+      - name: Set up Python
         if: steps.schedule_guard.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install System Utilities and Core Libraries
-        if: steps.schedule_guard.outputs.should_run == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: Install Stealth Framework Dependencies
+      - name: Install dependencies
         if: steps.schedule_guard.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # Installs matching chromium dependencies natively for Ubuntu runner instances
+          python -m pip install -r requirements.txt
           seleniumbase install chromedriver
 
-      - name: Run THM Bot Execution Script
+      - name: Run bot
         if: steps.schedule_guard.outputs.should_run == 'true'
         env:
           AUTH_COOKIES: ${{ secrets.AUTH_COOKIES }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
-          THM_EMAIL: ${{ secrets.THM_EMAIL }}
-          THM_PASSWORD: ${{ secrets.THM_PASSWORD }}
-        run: |
-          timeout 10m python main.py
-        continue-on-error: true
+        run: python main.py
 
-      - name: Upload Run Performance Artifacts
-        if: steps.schedule_guard.outputs.should_run == 'true'
+      - name: Upload diagnostics
+        if: always() && steps.schedule_guard.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: thm-bot-logs
@@ -66,3 +63,4 @@ jobs:
             tryhackmebot.log
             *.png
           retention-days: 7
+          if-no-files-found: warn
