@@ -61,7 +61,7 @@ def send_discord_payload(success, context_summary, image_path=None):
                         f"**Repository:** `{repository}`\n"
                         f"**Run:** {run_url}\n"
                         f"**Elapsed:** `{elapsed_seconds}s`\n"
-                        f"**Rooms:** `polkit`, `rppsempire`, `bashscripting`"
+                        f"**Rooms:** `polkit`"
                     )
                 }
             ] + [

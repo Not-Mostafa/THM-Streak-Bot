@@ -7,13 +7,12 @@ from selenium.webdriver.common.by import By
 
 ROOMS = [
     ("polkit", "https://tryhackme.com/room/polkit"),
-    ("rppsempire", "https://tryhackme.com/room/rppsempire"),
-    ("bashscripting", "https://tryhackme.com/room/bashscripting"),
 ]
 
 RESET_LABELS = ("reset room progress", "reset progress")
 CONFIRM_LABELS = ("yes", "confirm", "reset")
-COMPLETE_LABELS = ("complete", "mark complete", "complete task")
+MENU_LABELS = ("settings", "room settings", "more options", "menu")
+COMPLETE_LABELS = ("complete", "mark complete", "complete task", "submit", "answer", "next")
 
 
 def keep_streak(driver, status_callback=None):
@@ -106,6 +105,8 @@ def _reset_via_api(driver, room_name):
         except json.JSONDecodeError:
             pass
         return True, f"HTTP {result.get('status')}"
+    if not result:
+        return False, "reset API returned no response"
     return False, f"HTTP {result.get('status')}: {result.get('body', '')}"
 
 
@@ -161,23 +162,63 @@ def _click_named_control(driver, labels, contains=False):
     return False, ""
 
 
-def _reset_via_ui(driver):
-    clicked, _ = _click_named_control(driver, RESET_LABELS, contains=True)
-    if not clicked:
-        _click_named_control(driver, ("settings", "room settings", "more options"), contains=True)
+def _wait_and_click_named_control(driver, labels, contains=False, attempts=10):
+    """Wait for a client-rendered room control and click it."""
+    for _ in range(attempts):
+        clicked, label = _click_named_control(driver, labels, contains=contains)
+        if clicked:
+            return True, label
         time.sleep(1)
-        clicked, _ = _click_named_control(driver, RESET_LABELS, contains=True)
+    return False, ""
+
+
+def _open_room_menu(driver):
+    """Open the room options menu using labels or the legacy dropdown markup."""
+    clicked, _ = _click_named_control(driver, MENU_LABELS, contains=True)
+    if clicked:
+        return True
+
+    script = """
+        const candidates = [
+            ...document.querySelectorAll(
+                'div[class*="dropdown" i], button[class*="dropdown" i], '
+                + 'div[class*="menu" i], button[class*="menu" i], #user-menu'
+            )
+        ];
+        const target = candidates.find((element) => {
+            const style = getComputedStyle(element);
+            return style.display !== "none" && style.visibility !== "hidden";
+        });
+        if (!target) return false;
+        target.click();
+        return true;
+    """
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _reset_via_ui(driver):
+    clicked, _ = _wait_and_click_named_control(driver, RESET_LABELS, contains=True, attempts=3)
+    if not clicked:
+        _open_room_menu(driver)
+        time.sleep(1)
+        clicked, _ = _wait_and_click_named_control(driver, RESET_LABELS, contains=True)
     if not clicked:
         return False
 
     time.sleep(1)
-    confirmed, _ = _click_named_control(driver, CONFIRM_LABELS)
+    confirmed, _ = _wait_and_click_named_control(driver, CONFIRM_LABELS)
     return confirmed
 
 
 def _complete_one_task_via_ui(driver):
     """Complete one currently incomplete task using the room controls."""
-    clicked, label = _click_named_control(driver, COMPLETE_LABELS)
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    time.sleep(2)
+
+    clicked, label = _wait_and_click_named_control(driver, COMPLETE_LABELS, attempts=10)
     if clicked:
         return True, label
 
@@ -283,16 +324,21 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
         _wait_for_room(driver, room_name)
         _write_log(f"[+] Navigated to {room_name} room")
 
-        reset_done, reset_detail = _reset_via_api(driver, room_name)
+        # The legacy flow is more reliable on current room pages because it
+        # follows the same controls a user clicks. Keep the API as a fallback.
+        reset_done = _reset_via_ui(driver)
         if reset_done:
-            _notify(status_callback, f"{room_name}: room progress reset via API.")
+            _notify(status_callback, f"{room_name}: room progress reset using room controls.")
         else:
-            _write_log(f"[!] {room_name}: API reset failed ({reset_detail}); trying room controls.")
-            reset_done = _reset_via_ui(driver)
+            _write_log(f"[!] {room_name}: UI reset failed; trying reset API.")
+            reset_done, reset_detail = _reset_via_api(driver, room_name)
             if reset_done:
-                _notify(status_callback, f"{room_name}: room progress reset using room controls.")
+                _notify(status_callback, f"{room_name}: room progress reset via API.")
             else:
-                _notify(status_callback, f"{room_name}: failed to reset room progress.")
+                _notify(
+                    status_callback,
+                    f"{room_name}: failed to reset room progress ({reset_detail}).",
+                )
 
         if reset_done:
             driver.refresh()

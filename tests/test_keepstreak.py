@@ -120,6 +120,12 @@ class KeepStreakTests(unittest.TestCase):
 
         self.assertFalse(success)
 
+    def test_api_reset_handles_no_response(self):
+        success, detail = keepstreak._reset_via_api(FakeDriver(), "polkit")
+
+        self.assertFalse(success)
+        self.assertEqual(detail, "reset API returned no response")
+
     def test_read_room_progress_returns_percentage(self):
         self.assertEqual(keepstreak._read_room_progress(FakeDriver(script_result=16)), 16)
 
