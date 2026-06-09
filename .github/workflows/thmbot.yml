@@ -26,11 +26,8 @@ jobs:
         id: schedule_guard
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "$(TZ=Africa/Cairo date +%H)" == "04" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          
 
       - name: Set up Python
         if: steps.schedule_guard.outputs.should_run == 'true'
