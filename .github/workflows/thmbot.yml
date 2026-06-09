@@ -3,8 +3,8 @@ name: TryHackMe Streak Bot
 on:
   schedule:
     # Egypt switches between UTC+2 and UTC+3. The guard below runs only at 04:00 Africa/Cairo.
-    - cron: '0 1 * * *'
-    - cron: '0 2 * * *'
+    - cron: '34 2 * * *'
+    - cron: '30 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -20,21 +20,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check Egypt execution time
         id: schedule_guard
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "$(TZ=Africa/Cairo date +%H)" == "04" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          
 
       - name: Set up Python
         if: steps.schedule_guard.outputs.should_run == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -60,7 +57,7 @@ jobs:
 
       - name: Upload diagnostics
         if: always() && steps.schedule_guard.outputs.should_run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: thm-bot-logs
           path: |
