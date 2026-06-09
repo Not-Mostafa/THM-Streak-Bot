@@ -3,7 +3,7 @@ name: TryHackMe Streak Bot
 on:
   schedule:
     # Egypt switches between UTC+2 and UTC+3. The guard below runs only at 04:00 Africa/Cairo.
-    - cron: '30 3 * * *'
+    - cron: '34 2 * * *'
     - cron: '30 5 * * *'
   workflow_dispatch:
 
