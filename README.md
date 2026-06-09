@@ -17,7 +17,7 @@ On each run, the bot:
 1. Starts a headless Chrome session with SeleniumBase.
 2. Loads the cookies supplied in `AUTH_COOKIES` and verifies dashboard access.
 3. Visits each room configured in `keepstreak.py`.
-4. Resets the room and records the visible progress value when TryHackMe exposes it.
+4. Resets the room, completes one incomplete task, and verifies that room progress increased.
 5. Writes `tryhackmebot.log`, captures `thm_dashboard_state.png`, and optionally
    sends one final detailed result to Discord.
 
@@ -55,7 +55,8 @@ The workflow is scheduled for **04:00 Africa/Cairo** each day. GitHub cron uses
 UTC, so the workflow has two cron triggers and a timezone guard to account for
 Egyptian daylight-saving changes. Manual runs bypass the time guard.
 
-The run fails when authentication or any configured room action fails.
+The run fails when authentication fails or when any configured room cannot be
+reset, completed, and verified with a room-progress increase.
 Diagnostics are uploaded as the `thm-bot-logs` artifact even after a failed run
 and are retained for seven days.
 

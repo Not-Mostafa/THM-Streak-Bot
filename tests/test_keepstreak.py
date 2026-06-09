@@ -1,6 +1,7 @@
 import unittest
 import sys
 import types
+from unittest.mock import patch
 
 
 selenium = types.ModuleType("selenium")
@@ -43,10 +44,11 @@ class FakeElement:
 
 
 class FakeDriver:
-    def __init__(self, elements=None, api_result=None, script_result=None):
+    def __init__(self, elements=None, api_result=None, script_result=None, progress_results=None):
         self.elements = elements or []
         self.api_result = api_result
         self.script_result = script_result
+        self.progress_results = list(progress_results or [])
         self.current_url = "https://tryhackme.com/room/polkit"
         self.title = "TryHackMe | Test Room"
         self.refreshed = False
@@ -57,6 +59,8 @@ class FakeDriver:
     def execute_script(self, _script, *_args):
         if "document.readyState" in _script:
             return "complete"
+        if "Room progress" in _script and self.progress_results:
+            return self.progress_results.pop(0)
         return self.script_result
 
     def set_script_timeout(self, _timeout):
@@ -127,10 +131,21 @@ class KeepStreakTests(unittest.TestCase):
 
         self.assertEqual(keepstreak._read_streak(driver), "82")
 
-    def test_room_is_successful_when_reset_and_progress_are_verified(self):
+    def test_complete_one_task_clicks_complete_control(self):
+        element = FakeElement(text="Complete")
+
+        submitted, label = keepstreak._complete_one_task_via_ui(FakeDriver([element]))
+
+        self.assertTrue(submitted)
+        self.assertTrue(element.clicked)
+        self.assertEqual(label, "complete")
+
+    @patch("keepstreak.time.sleep")
+    def test_room_is_successful_when_completion_and_progress_are_verified(self, _sleep):
         driver = FakeDriver(
+            elements=[FakeElement(text="Complete")],
             api_result={"ok": True, "status": 200, "body": '{"success":true}'},
-            script_result=16,
+            progress_results=[0, 16],
         )
 
         result = keepstreak._keep_streak_room(
@@ -142,12 +157,15 @@ class KeepStreakTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         self.assertTrue(result["reset"])
+        self.assertTrue(result["submitted"])
+        self.assertEqual(result["reset_progress"], 0)
         self.assertEqual(result["progress"], 16)
 
-    def test_room_is_successful_when_reset_succeeds_and_progress_is_hidden(self):
+    @patch("keepstreak.time.sleep")
+    def test_room_fails_when_reset_succeeds_but_no_completion_is_found(self, _sleep):
         driver = FakeDriver(
             api_result={"ok": True, "status": 200, "body": '{"success":true}'},
-            script_result=None,
+            progress_results=[0, 0],
         )
 
         result = keepstreak._keep_streak_room(
@@ -157,8 +175,47 @@ class KeepStreakTests(unittest.TestCase):
             None,
         )
 
-        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["status"], "failed")
         self.assertTrue(result["reset"])
+        self.assertFalse(result["submitted"])
+        self.assertEqual(result["progress"], 0)
+
+    @patch("keepstreak.time.sleep")
+    def test_room_fails_when_clicked_completion_does_not_increase_progress(self, _sleep):
+        driver = FakeDriver(
+            elements=[FakeElement(text="Complete")],
+            api_result={"ok": True, "status": 200, "body": '{"success":true}'},
+            progress_results=[16, 16],
+        )
+
+        result = keepstreak._keep_streak_room(
+            driver,
+            "polkit",
+            "https://tryhackme.com/room/polkit",
+            None,
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["submitted"])
+        self.assertEqual(result["reset_progress"], result["progress"])
+
+    @patch("keepstreak.time.sleep")
+    def test_room_fails_when_progress_cannot_be_verified(self, _sleep):
+        driver = FakeDriver(
+            elements=[FakeElement(text="Complete")],
+            api_result={"ok": True, "status": 200, "body": '{"success":true}'},
+            progress_results=[None, None],
+        )
+
+        result = keepstreak._keep_streak_room(
+            driver,
+            "polkit",
+            "https://tryhackme.com/room/polkit",
+            None,
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["submitted"])
         self.assertIsNone(result["progress"])
 
 

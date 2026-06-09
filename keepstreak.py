@@ -13,6 +13,7 @@ ROOMS = [
 
 RESET_LABELS = ("reset room progress", "reset progress")
 CONFIRM_LABELS = ("yes", "confirm", "reset")
+COMPLETE_LABELS = ("complete", "mark complete", "complete task")
 
 
 def keep_streak(driver, status_callback=None):
@@ -174,6 +175,33 @@ def _reset_via_ui(driver):
     return confirmed
 
 
+def _complete_one_task_via_ui(driver):
+    """Complete one currently incomplete task using the room controls."""
+    clicked, label = _click_named_control(driver, COMPLETE_LABELS)
+    if clicked:
+        return True, label
+
+    # Some room versions append context such as "Complete Task 1".
+    for element in _visible_controls(driver):
+        try:
+            if not element.is_displayed() or not element.is_enabled():
+                continue
+            text = _control_text(element)
+            if not text or "reset" in text or "completed" in text:
+                continue
+            if not any(label in text for label in COMPLETE_LABELS):
+                continue
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+            try:
+                element.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", element)
+            return True, text
+        except Exception:
+            continue
+    return False, ""
+
+
 def _read_streak(driver):
     selectors = [
         (By.ID, "user-streak"),
@@ -243,8 +271,10 @@ def _save_failure_diagnostics(driver, room_name):
 
 
 def _keep_streak_room(driver, room_name, room_url, status_callback):
-    """Reset a room and verify TryHackMe reports progress afterward."""
+    """Reset a room, complete one task, and verify progress afterward."""
     reset_done = False
+    submitted = False
+    reset_progress = None
     progress = None
     streak_value = "not found"
 
@@ -264,23 +294,48 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
             else:
                 _notify(status_callback, f"{room_name}: failed to reset room progress.")
 
+        if reset_done:
+            driver.refresh()
+            _wait_for_room(driver, room_name)
+            reset_progress = _read_room_progress(driver)
+            if reset_progress is not None and reset_progress != 0:
+                _write_log(
+                    f"[!] {room_name}: reset did not produce 0% progress "
+                    f"(reported {reset_progress}%)."
+                )
+
+            submitted, completion_label = _complete_one_task_via_ui(driver)
+            if submitted:
+                _notify(
+                    status_callback,
+                    f"{room_name}: clicked completion control '{completion_label}'.",
+                )
+                time.sleep(2)
+            else:
+                _notify(status_callback, f"{room_name}: no incomplete task completion control found.")
+        else:
+            _notify(status_callback, f"{room_name}: skipping completion because reset failed.")
+
         driver.refresh()
         _wait_for_room(driver, room_name)
         progress = _read_room_progress(driver)
-        if progress is not None:
-            _notify(status_callback, f"{room_name}: verified room progress at {progress}%.")
-        else:
+        progress_increased = (
+            reset_progress is not None
+            and progress is not None
+            and progress > reset_progress
+        )
+        if progress_increased:
             _notify(
                 status_callback,
-                f"{room_name}: reset accepted; visual progress value is unavailable to browser scripts.",
+                f"{room_name}: verified progress increased from {reset_progress}% to {progress}%.",
             )
+        else:
+            _notify(status_callback, f"{room_name}: could not verify a room progress increase.")
 
         streak_value = _read_streak(driver)
         _write_log(f"[+] {room_name}: streak value is {streak_value}")
 
-        # A successful reset API response is the authoritative action result.
-        # Progress is best-effort reporting because TryHackMe may render it via CSS.
-        status = "success" if reset_done else "failed"
+        status = "success" if reset_done and submitted and progress_increased else "failed"
         if status == "failed":
             _save_failure_diagnostics(driver, room_name)
 
@@ -288,6 +343,8 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
             "room": room_name,
             "url": room_url,
             "reset": reset_done,
+            "submitted": submitted,
+            "reset_progress": reset_progress,
             "progress": progress,
             "streak": streak_value,
             "status": status,
@@ -301,6 +358,8 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
             "room": room_name,
             "url": room_url,
             "reset": reset_done,
+            "submitted": submitted,
+            "reset_progress": reset_progress,
             "progress": progress,
             "streak": streak_value,
             "status": "failed",

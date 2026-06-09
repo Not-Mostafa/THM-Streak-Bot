@@ -152,13 +152,18 @@ def main():
             
             # Executing streak maintenance module logic
             write_log("[+] Initializing user streak tracking tasks...")
-            record_update("Authentication confirmed. Starting one reset and progress verification pass in each configured room.")
+            record_update("Authentication confirmed. Resetting and completing one task in each configured room.")
             room_results = keep_streak(driver, status_callback=record_update)
             write_log("[+] Streak verification processing finalized safely.")
             
             status_success = all(result["status"] == "success" for result in room_results)
             result_lines = []
             for result in room_results:
+                reset_progress = (
+                    f"{result['reset_progress']}%"
+                    if result["reset_progress"] is not None
+                    else "not exposed"
+                )
                 progress = (
                     f"{result['progress']}%"
                     if result["progress"] is not None
@@ -166,7 +171,8 @@ def main():
                 )
                 result_lines.append(
                     f"- **{result['room']}**: `{result['status']}` | "
-                    f"reset `{result['reset']}` | progress `{progress}` | "
+                    f"reset `{result['reset']}` | submitted `{result['submitted']}` | "
+                    f"progress `{reset_progress} -> {progress}` | "
                     f"streak `{result['streak']}`"
                 )
             status_details = "Room execution results:\n" + "\n".join(result_lines)
