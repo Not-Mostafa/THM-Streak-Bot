@@ -24,7 +24,8 @@ On each run, the bot:
 The default rooms are:
 
 - [polkit](https://tryhackme.com/room/polkit)
-
+- [bashscripting](https://tryhackme.com/room/bashscripting)
+- [rppsempire](https://tryhackme.com/room/rppsempire)
 Join every configured room before running the bot.
 
 ## Requirements
