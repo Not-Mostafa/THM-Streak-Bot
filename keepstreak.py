@@ -133,7 +133,8 @@ def _keep_streak_room(driver, room_name, room_url, status_callback):
         if not submit_done:
             _notify(status_callback, f"{room_name}: failed to submit a completion.")
             pass
-
+        time.sleep(random.uniform(3, 6))
+        driver.get(room_url)
         # Check the streak counter
         try:
             js_script = 'return document.querySelector(\'button[data-testid="streak-trigger"] p\').textContent;'
