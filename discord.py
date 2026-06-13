@@ -9,11 +9,10 @@ from mail import *
 def send_discord_payload(success, context_summary, image_path=None,run_started_at='Null',execution_logs=[]):
     try:
         send_gmail_report(
-            success=success, 
-            context_summary=context_summary, 
-            execution_logs=execution_logs, 
-            error_reason=context_summary if not success else "None"
-        )
+            success, 
+            context_summary, 
+            execution_logs, 
+            error_reason=context_summary if not success else "None")
         print("[+] Gmail notification sent successfully.")
     except Exception as email_err:
         print(f"[!] Failed to send Gmail report wrapper: {email_err}")
